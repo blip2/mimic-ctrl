@@ -11,7 +11,7 @@
 static const int RELAY_OFF = HIGH;
 static const int RELAY_ON = LOW;
 
-static const int BUZZ = 14;  // Buzzer
+static const int BUZZ = 15;  // Buzzer
 
 // Class to manage each block of track
 class Block
@@ -43,7 +43,7 @@ class Block
   // Train is waiting to enter block, return true if clear
   {
     unsigned long currentTime = millis();
-    if (!occupied) {
+    if (!occupied && !leaving) {
       occupied = true;
       digitalWrite(signalPin, RELAY_OFF);
       timeEntered = currentTime;
@@ -78,13 +78,18 @@ class Block
     }
 
     // Clear block some time (5 sec) after entering next block
-    if (leaving > 0 && (currentTime - 5000) > leaving) {
+    if (occupied && leaving > 0 && (currentTime - 5000) > leaving) {
       occupied = false;
-      leaving = 0;
       timeEntered = 0;
+      leaving = currentTime;
       digitalWrite(signalPin, RELAY_ON);
       Serial.print("CLEAR: ");
       Serial.println(id);
+    }
+
+    // Allow train to enter some time (2 sec) after block clear
+    if (!occupied && leaving > 0 && (currentTime - 2000) > leaving) {
+      leaving = 0;
     }
   }
 };
@@ -97,21 +102,21 @@ long EntryTimes[numEntryBlocks];
 const int numRoutes = 8;
 Block routes[numRoutes] = {
   Block(11, 12, 12, 500),   // Up entry
-  Block(12, 13, 1, 7000),   // Up approach
-  Block(13, 14, 2, 10000),  // Up platform
+  Block(12, 13, 2, 9000),   // Up approach
+  Block(13, 14, 3, 10000),  // Up platform
   Block(14, 0, 6, 20000),   // Up away
 
-  Block(21, 22, 13, 500),   // Down entry
-  Block(22, 23, 7, 7000),   // Down approach
-  Block(23, 24, 8, 10000),  // Down platform
-  Block(24, 0, 11, 20000),  // Down away
+  Block(21, 22, 14, 500),   // Down entry
+  Block(22, 23, 7, 20000),   // Down approach
+  Block(23, 24, 8, 5000),  // Down platform
+  Block(24, 0, 11, 9000),  // Down away
 };
 
 // Setup buttons
 const int numButtons = 2;
 const int buttonPins[numButtons] = {
-  15,                       // Up acknowledge button
-  16,                       // Down acknowledge button
+  16,                       // Up acknowledge button
+  17,                       // Down acknowledge button
 };
 Bounce buttons[numButtons];
 
@@ -119,9 +124,9 @@ Bounce buttons[numButtons];
 const int numOutPins = 4;
 const int outPins[numOutPins] = {
   4,                       // Up ER given
-  5,                       // Down ER free
-  7,                       // Up ER given
-  8,                       // Down ER free
+  5,                       // Up ER free
+  9,                       // Down ER given
+  10,                      // Down ER free
 };
 
 long stationTimes[3] = {3000, 10000, 5000};
@@ -132,11 +137,11 @@ int downStationState = 0;
 
 void setup() {
   pinMode(BUZZ, OUTPUT);
-  digitalWrite(BUZZ, RELAY_OFF);
+  digitalWrite(BUZZ, HIGH);
 
   for (int i=0; i <= numOutPins - 1; i++){
     pinMode(outPins[i], OUTPUT);
-    digitalWrite(outPins[i], RELAY_OFF);
+    digitalWrite(outPins[i], RELAY_ON);
   }
 
   Serial.begin(9600);
@@ -193,11 +198,11 @@ void loop() {
         buzzInc = buzzInc + buzzSeq[i];
         if (currentTime < buzzTimer + buzzInc) {
           if ((i % 2) == 0 && !buzzState) {
-            digitalWrite(BUZZ, RELAY_ON);
+            digitalWrite(BUZZ, LOW);
             Serial.println("BUZZ");
             buzzState = true;
           } else if ((i % 2) != 0 && buzzState) {
-            digitalWrite(BUZZ, RELAY_OFF);
+            digitalWrite(BUZZ, HIGH);
             buzzState = false;
           }
           break;
@@ -206,7 +211,7 @@ void loop() {
     if (currentTime > (buzzTimer + buzzInc)) {
       buzzTimer = 0;
       buzzState = false;
-      digitalWrite(BUZZ, RELAY_OFF);
+      digitalWrite(BUZZ, HIGH);
     }
   }
 
@@ -222,7 +227,7 @@ void loop() {
           buzzTimer = currentTime;
         };
       };
-      EntryTimes[i] = currentTime + random(7000, 50000);
+      EntryTimes[i] = currentTime + random(15000, 50000);
     }
   }
 
@@ -248,12 +253,12 @@ void loop() {
         // Currently uses ER lamps to indicate train departure
         // Not entirely accurate but more visually interesting!
         if (!upStationState) {
-          digitalWrite(outPins[0], RELAY_ON);
+          digitalWrite(outPins[0], RELAY_OFF);
           upStationTimer = currentTime;
           upStationState = 1;
           Serial.println("ERU Given");
         } if (upStationState == 1 && currentTime > upStationTimer + stationTimes[0]) {
-          digitalWrite(outPins[0], RELAY_ON);
+          digitalWrite(outPins[1], RELAY_OFF);
           upStationState = 2;
           Serial.println("ERU Free");
         } else if (upStationState == 2 && currentTime > upStationTimer + stationTimes[1]) {
@@ -265,12 +270,12 @@ void loop() {
       } else if (routes[i].id == 23) {
         // Station block, wait for departure
         if (!downStationState) {
-          digitalWrite(outPins[2], RELAY_ON);
+          digitalWrite(outPins[2], RELAY_OFF);
           downStationTimer = currentTime;
           downStationState = 1;
           Serial.println("ERU Given");
         } if (downStationState == 1 && currentTime > downStationTimer + stationTimes[0]) {
-          digitalWrite(outPins[0], RELAY_ON);
+          digitalWrite(outPins[3], RELAY_OFF);
           downStationState = 2;
           Serial.println("ERU Free");
         } else if (downStationState == 2 && currentTime > downStationTimer + stationTimes[1]) {
@@ -286,13 +291,13 @@ void loop() {
   }
 
   if (upStationState == 3 && currentTime > upStationTimer) {
-    digitalWrite(outPins[0], RELAY_OFF);
-    digitalWrite(outPins[1], RELAY_OFF);
+    digitalWrite(outPins[0], RELAY_ON);
+    digitalWrite(outPins[1], RELAY_ON);
     upStationState = 0;
   }
   if (downStationState == 3 && currentTime > downStationTimer) {
-    digitalWrite(outPins[2], RELAY_OFF);
-    digitalWrite(outPins[3], RELAY_OFF);
+    digitalWrite(outPins[2], RELAY_ON);
+    digitalWrite(outPins[3], RELAY_ON);
     downStationState = 0;
   }
 
